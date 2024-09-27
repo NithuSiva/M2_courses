@@ -1,0 +1,117 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# TP2
+
+# Data
+
+### dataframe du jeu de données 'cars'
+
+```{r}
+
+df <- data.frame(
+  cars
+)
+
+print(cars)
+
+```
+
+### graphique de jeu de données 'cars'
+
+```{r}
+
+plot(cars)
+
+```
+
+# 1 - 1 Moyenne des distances et vitesses
+
+```{r}
+
+moyenne_vit <- mean(cars$speed)
+  
+moyenne_dist <- mean(cars$dist)
+
+print(paste('Moyenne vitesse :', moyenne_vit))
+print(paste('Moyenne distance :', moyenne_dist))
+
+```
+
+# 1 - 2 Variance des distances et vitesses
+
+```{r}
+
+#variance_vit =  sum(cars$dist * (cars$speed - moyenne_vit)^2) / sum(cars$dist)
+variance_vit = var(cars$dist)
+
+#variance_dist =  sum(cars$speed * (cars$dist - moyenne_dist)^2) / sum(cars$speed)
+variance_dist = var(cars$speed)
+
+print(paste('Variance de la vitesse : ', variance_vit))
+print(paste('Variance de la distance : ', variance_dist))     
+      
+
+```
+
+# 1 - 3 Droite régression D (dist, vit) méthode moindres carrés
+
+```{r}
+
+lm_dist_vit <- lm(cars$dist ~ cars$speed, data = cars)
+
+plot(cars$speed, cars$dist, col = "blue")
+abline(lm_dist_vit, col = "red") 
+```
+
+# 1 - 4 Droite régression D (vit, dist) méthode moindres carrés
+
+```{r}
+
+
+lm_vit_dist <- lm(cars$speed ~ cars$dist, data = cars)
+
+plot(cars$dist, cars$speed, col = "blue")
+
+abline(lm_vit_dist, col = "red", lwd = 2)
+
+```
+
+# 1 - 5 Représentation graphique des 2 droites
+
+```{r}
+
+plot(cars$dist, cars$speed, col = "blue")
+
+abline(lm_vit_dist, col = "red", lwd = 2) 
+
+abline(lm_dist_vit, col = "green", lwd = 2) 
+
+```
+
+```{r}
+
+
+m1 <- coef(lm_dist_vit)[2]  
+m2 <- coef(lm_vit_dist)[2]  
+
+tan_theta <- abs((m1 - m2) / (1 + m1 * m2))
+theta_radians <- atan(tan_theta)
+
+theta_degrees <- theta_radians * (180 / pi)
+
+theta_degrees
+
+```
+
+# 1-6 Coefficient de corrélation linéaire
+
+```{r}
+
+
+correlation <- cor(cars$speed, cars$dist)
+
+print(correlation)
+```
