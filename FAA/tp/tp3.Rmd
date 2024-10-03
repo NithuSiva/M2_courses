@@ -1,0 +1,93 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Analyse
+
+```{r}
+
+evans <- read.table("http://web1.sph.emory.edu/dkleinb/allDatasets/datasets/evans.dat")
+head(evans)
+
+
+```
+
+```{r}
+
+names(evans) <- c("id","chd","cat","age","chl","smk","ecg","dbp","sbp","hpt","ch","cc")
+head(evans) 
+
+
+```
+
+```{r}
+
+boxplot(evans$cat ~ evans$chd, 
+        main = "Niveau de Cat par CHD",
+        xlab = "Presence de CHD (1 = Yes, 0 = No)",
+        ylab = "Cat",
+        col = c("lightblue", "lightgreen"))
+
+```
+
+```{r}
+
+plot(evans$cat ~ evans$age, , xlab = "Age", ylab = "cat")      
+
+```
+
+```{r}
+plot(evans$chd ~ evans$age, xlab = "Age", ylab = "CHD")     
+  
+```
+
+```{r}
+myregcat=glm(evans$cat ~ evans$age , family=binomial(link=logit))
+summary(myregcat)
+```
+
+```{r}
+
+logit_ypreditcat=0.11*evans$age+(-7.58)
+ypredit=exp(logit_ypreditcat)/(1+ exp(logit_ypreditcat)) 
+plot(evans$age,evans$cat)
+points(evans$age,ypredit, col="red")
+```
+
+```{r}
+myregchd=glm(evans$chd ~ evans$age , family=binomial(link=logit))
+summary(myregchd)
+```
+
+```{r}
+logit_ypreditchd=0.04*evans$age+(-4.47)
+ypreditchd=exp(logit_ypreditchd)/(1+ exp(logit_ypreditchd)) 
+plot(evans$age,evans$cat)
+points(evans$age,ypreditchd, col="red")
+```
+
+```{r}
+myreg=glm(evans$chd ~ evans$age + evans$chl + evans$smk + evans$ecg + evans$hpt , family=binomial(link=logit))
+summary(myregchd)
+```
+
+```{r}
+
+predicted_prob <- predict(myreg, type = "response")
+
+plot(evans$age, evans$chd, xlab = "Age", ylab = "CHD")
+
+points(evans$age, predicted_prob, col = "red", pch = 19)
+```
+
+```{r}
+library(sjPlot)
+
+# coefficients du modèle
+plot_model(myregchd, type = "est", show.values = TRUE, value.offset = .3) +
+  theme_minimal() +
+  labs(title = "Effet des variables sur CHD",
+       x = "Coefficients", y = "Variables")
+
+```

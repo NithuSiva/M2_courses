@@ -102,7 +102,7 @@ theta_radians <- atan(tan_theta)
 
 theta_degrees <- theta_radians * (180 / pi)
 
-theta_degrees
+print(paste('angle entre les deux droites :', theta_degrees))
 
 ```
 
@@ -114,4 +114,5 @@ theta_degrees
 correlation <- cor(cars$speed, cars$dist)
 
 print(correlation)
+print("Plus la valeur de corrélation montre que la vitesse et la distance on une forte correlation car elle est proche de 1")
 ```

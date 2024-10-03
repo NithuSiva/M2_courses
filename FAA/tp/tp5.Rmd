@@ -1,0 +1,78 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+
+library(tree)
+
+data <- data.frame(
+  Météo = c("soleil", "soleil", "soleil", "soleil", "nuages", "nuages", "nuages", "nuages", "soleil"),
+  Amis = c("présents", "absents", "présents", "absents", "absents", "présents", "absents", "présents", "absents"),
+  Vent = c("faible", "fort", "fort", "faible", "faible", "fort", "fort", "faible", "faible"),
+  Jour = c("week-end", "semaine", "semaine", "semaine", "week-end", "week-end", "semaine", "week-end", "week-end"),
+  Décision = c("oui", "non", "non", "oui", "non", "non", "non", "oui", "non")
+)
+
+head(data)
+
+```
+```{r}
+
+col_m <- as.factor(data$Météo)
+freq_m <- table(col_m) / length(col_m)
+H_meteo <- -sum(freq_m * log2(freq_m))
+H_meteo <- 0.9
+col_a <- as.factor(data$Amis)
+freq_a <- table(col_a) / length(col_a)
+H_amis <- -sum(freq_a * log2(freq_a))
+H_amis <- 0.84
+
+col_v <- as.factor(data$Vent)
+freq_v <- table(col_v) / length(col_v)
+H_vent <- -sum(freq_v * log2(freq_v))
+H_vent <- 0.5
+
+col_j <- as.factor(data$Jour)
+freq_j <- table(col_j) / length(col_j)
+H_jour <- -sum(freq_j * log2(freq_j))
+H_jour <- 0.99
+
+print(paste(H_meteo, H_amis, H_vent, H_jour))
+
+```
+
+```{r}
+
+library(rpart)
+
+data <- data.frame(
+  Météo = c("soleil", "nuages", "soleil", "soleil", "nuages"),
+  Amis = c("présents", "absents", "absents", "absents", "présents"),
+  Vent = c("fort", "faible", "faible", "faible", "faible"),
+  Jour = c("week-end", "semaine", "week-end", "semaine", "semaine"),
+  Décision = c("non", "non", "oui", "non", "oui")
+)
+
+# Créer l'arbre de décision
+arbre_decision <- rpart(Vent ~ + Amis  + Jour + Météo, data = data, method = "class", minsplit = 1)
+
+# Visualiser l'arbre de décision
+rpart.plot(arbre_decision)
+
+```
+
+
+```{r}
+
+cp_a_prendre <- arbre_decision$cptable[2, "CP"]
+
+# 5. Élaguer l'arbre
+arbre_elague <- prune(arbre_decision, cp = cp_a_prendre)
+
+# 6. Afficher l'arbre élagué
+cat("Arbre élagué :\n")
+rpart.plot(arbre_elague)
+```

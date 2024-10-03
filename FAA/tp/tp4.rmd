@@ -1,0 +1,483 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## 1
+
+```{r}
+#install.packages(c("FactoMineR", "factoextra"))
+library("FactoMineR")
+library("factoextra")
+
+data(decathlon2)
+print(decathlon2)
+```
+# head(decathlon2)
+
+```{r}
+decathlon2.active <- decathlon2[1:23, 1:10]
+head(decathlon2.active[, 1:6], 4)
+```
+```{r}
+PCA(decathlon2.active, scale.unit = TRUE, ncp = 5, graph = TRUE)
+```
+
+```{r}
+library("FactoMineR")
+res.pca <- PCA(decathlon2.active, graph = FALSE)
+print(res.pca)
+```
+
+```{r}
+library("factoextra")
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+```
+
+```{r}
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+```
+
+```{r}
+var <- get_pca_var(res.pca)
+var
+```
+
+```{r}
+# Coordinates
+head(var$coord)
+# Cos2: quality on the factore map
+head(var$cos2)
+# Contributions to the principal components
+head(var$contrib)
+# Coordinates of variables
+head(var$coord, 4)
+```
+
+```{r}
+fviz_pca_var(res.pca, col.var = "black")
+```
+
+```{r}
+head(var$cos2, 4)
+```
+
+```{r}
+library("corrplot")
+corrplot(var$cos2, is.corr=FALSE)
+```
+
+```{r}
+# Total cos2 of variables on Dim.1 and Dim.2
+fviz_cos2(res.pca, choice = "var", axes = 1:2)
+```
+
+```{r}
+# Color by cos2 values: quality on the factor map
+fviz_pca_var(res.pca, col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE # Avoid text overlapping
+             )
+```
+
+
+```{r}
+# Change the transparency by cos2 values
+fviz_pca_var(res.pca, alpha.var = "cos2")
+```
+
+```{r}
+head(var$contrib, 4)
+```
+
+```{r}
+library("corrplot")
+corrplot(var$contrib, is.corr=FALSE)    
+```
+
+```{r}
+# Contributions of variables to PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+# Contributions of variables to PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+```
+
+```{r}
+fviz_contrib(res.pca, choice = "var", axes = 1:2, top = 10)
+```
+
+```{r}
+fviz_pca_var(res.pca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07")
+             )
+```
+
+```{r}
+# Change the transparency by contrib values
+fviz_pca_var(res.pca, alpha.var = "contrib")
+```
+
+```{r}
+# Create a random continuous variable of length 10
+set.seed(123)
+my.cont.var <- rnorm(10)
+# Color variables by the continuous variable
+fviz_pca_var(res.pca, col.var = my.cont.var,
+             gradient.cols = c("blue", "yellow", "red"),
+             legend.title = "Cont.Var")
+```
+
+```{r}
+# Create a grouping variable using kmeans
+# Create 3 groups of variables (centers = 3)
+set.seed(123)
+res.km <- kmeans(var$coord, centers = 3, nstart = 25)
+grp <- as.factor(res.km$cluster)
+# Color variables by groups
+fviz_pca_var(res.pca, col.var = grp, 
+             palette = c("#0073C2FF", "#EFC000FF", "#868686FF"),
+             legend.title = "Cluster")
+```
+
+```{r}
+res.desc <- dimdesc(res.pca, axes = c(1,2), proba = 0.05)
+# Description of dimension 1
+res.desc$Dim.1
+```
+
+```{r}
+# Description of dimension 2
+res.desc$Dim.2
+```
+
+```{r}
+ind <- get_pca_ind(res.pca)
+ind
+```
+
+```{r}
+# Coordinates of individuals
+head(ind$coord)
+# Quality of individuals
+head(ind$cos2)
+# Contributions of individuals
+head(ind$contrib)
+```
+```{r}
+fviz_pca_ind(res.pca)
+```
+
+```{r}
+fviz_pca_ind(res.pca, col.ind = "cos2", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+```
+
+```{r}
+fviz_pca_ind(res.pca, pointsize = "cos2", 
+             pointshape = 21, fill = "#E7B800",
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+```
+
+```{r}
+fviz_pca_ind(res.pca, col.ind = "cos2", pointsize = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping (slow if many points)
+             )
+```
+```{r}
+fviz_cos2(res.pca, choice = "ind")
+```
+
+```{r}
+# Total contribution on PC1 and PC2
+fviz_contrib(res.pca, choice = "ind", axes = 1:2)
+```
+```{r}
+# Create a random continuous variable of length 23,
+# Same length as the number of active individuals in the PCA
+set.seed(123)
+my.cont.var <- rnorm(23)
+# Color individuals by the continuous variable
+fviz_pca_ind(res.pca, col.ind = my.cont.var,
+             gradient.cols = c("blue", "yellow", "red"),
+             legend.title = "Cont.Var")
+```
+```{r}
+head(iris, 3)
+```
+```{r}
+# The variable Species (index = 5) is removed
+# before PCA analysis
+iris.pca <- PCA(iris[,-5], graph = FALSE)
+```
+```{r}
+fviz_pca_ind(iris.pca,
+             geom.ind = "point", # show points only (nbut not "text")
+             col.ind = iris$Species, # color by groups
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = TRUE, # Concentration ellipses
+             legend.title = "Groups"
+             )
+```
+```{r}
+# Add confidence ellipses
+fviz_pca_ind(iris.pca, geom.ind = "point", col.ind = iris$Species, 
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = TRUE, ellipse.type = "confidence",
+             legend.title = "Groups"
+             )
+```
+```{r}
+fviz_pca_ind(iris.pca,
+             label = "none", # hide individual labels
+             habillage = iris$Species, # color by groups
+             addEllipses = TRUE, # Concentration ellipses
+             palette = "jco"
+             )
+```
+```{r}
+# Variables on dimensions 2 and 3
+fviz_pca_var(res.pca, axes = c(2, 3))
+# Individuals on dimensions 2 and 3
+fviz_pca_ind(res.pca, axes = c(2, 3))
+```
+```{r}
+#geom.var: a text specifying the geometry to be used for plotting variables. Allowed values are the combination of c(“point”, “arrow”, “text”).
+# Use geom.var = "point", to show only points;
+# Use geom.var = "text" to show only text labels;
+# Use geom.var = c("point", "text") to show both points and text labels
+# Use geom.var = c("arrow", "text") to show arrows and labels (default).
+# Show variable points and text labels
+fviz_pca_var(res.pca, geom.var = c("point", "text"))
+```
+```{r}
+# Show individuals text labels only
+fviz_pca_ind(res.pca, geom.ind =  "text")
+```
+```{r}
+# Change the size of arrows an labels
+fviz_pca_var(res.pca, arrowsize = 1, labelsize = 5, 
+             repel = TRUE)
+# Change points size, shape and fill color
+# Change labelsize
+fviz_pca_ind(res.pca, 
+             pointsize = 3, pointshape = 21, fill = "lightblue",
+             labelsize = 5, repel = TRUE)
+```
+```{r}
+# Add confidence ellipses
+fviz_pca_ind(iris.pca, geom.ind = "point", 
+             col.ind = iris$Species, # color by groups
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = TRUE, ellipse.type = "confidence",
+             legend.title = "Groups"
+             )
+# Convex hull
+fviz_pca_ind(iris.pca, geom.ind = "point",
+             col.ind = iris$Species, # color by groups
+             palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = TRUE, ellipse.type = "convex",
+             legend.title = "Groups"
+             )
+```
+```{r}
+fviz_pca_ind(iris.pca,
+             geom.ind = "point", # show points only (but not "text")
+             group.ind = iris$Species, # color by groups
+             legend.title = "Groups",
+             mean.point = FALSE)
+```
+```{r}
+fviz_pca_var(res.pca, axes.linetype = "blank")
+```
+```{r}
+ind.p <- fviz_pca_ind(iris.pca, geom = "point", col.ind = iris$Species)
+ggpubr::ggpar(ind.p,
+              title = "Principal Component Analysis",
+              subtitle = "Iris data set",
+              caption = "Source: factoextra",
+              xlab = "PC1", ylab = "PC2",
+              legend.title = "Species", legend.position = "top",
+              ggtheme = theme_gray(), palette = "jco"
+              )
+```
+```{r}
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+```
+```{r}
+fviz_pca_biplot(iris.pca, 
+                col.ind = iris$Species, palette = "jco", 
+                addEllipses = TRUE, label = "var",
+                col.var = "black", repel = TRUE,
+                legend.title = "Species") 
+```
+```{r}
+fviz_pca_biplot(iris.pca, 
+                # Fill individuals by groups
+                geom.ind = "point",
+                pointshape = 21,
+                pointsize = 2.5,
+                fill.ind = iris$Species,
+                col.ind = "black",
+                # Color variable by groups
+                col.var = factor(c("sepal", "sepal", "petal", "petal")),
+                
+                legend.title = list(fill = "Species", color = "Clusters"),
+                repel = TRUE        # Avoid label overplotting
+             )+
+  ggpubr::fill_palette("jco")+      # Indiviual fill color
+  ggpubr::color_palette("npg")      # Variable colors
+```
+```{r}
+fviz_pca_biplot(iris.pca, 
+                # Individuals
+                geom.ind = "point",
+                fill.ind = iris$Species, col.ind = "black",
+                pointshape = 21, pointsize = 2,
+                palette = "jco",
+                addEllipses = TRUE,
+                # Variables
+                alpha.var ="contrib", col.var = "contrib",
+                gradient.cols = "RdYlBu",
+                
+                legend.title = list(fill = "Species", color = "Contrib",
+                                    alpha = "Contrib")
+                )
+```
+```{r}
+PCA(decathlon2.active, ind.sup = NULL, 
+    quanti.sup = NULL, quali.sup = NULL, graph = TRUE)
+```
+```{r}
+res.pca <- PCA(decathlon2, ind.sup = 24:27, 
+               quanti.sup = 11:12, quali.sup = 13, graph=FALSE)
+```
+```{r}
+res.pca$quanti.sup
+```
+```{r}
+fviz_pca_var(res.pca)
+```
+```{r}
+# Change color of variables
+fviz_pca_var(res.pca,
+             col.var = "black",     # Active variables
+             col.quanti.sup = "red" # Suppl. quantitative variables
+             )
+# Hide active variables on the plot, 
+# show only supplementary variables
+fviz_pca_var(res.pca, invisible = "var")
+# Hide supplementary variables
+fviz_pca_var(res.pca, invisible = "quanti.sup")
+```
+```{r}
+# Plot of active variables
+p <- fviz_pca_var(res.pca, invisible = "quanti.sup")
+# Add supplementary active variables
+fviz_add(p, res.pca$quanti.sup$coord, 
+         geom = c("arrow", "text"), 
+         color = "red")
+```
+```{r}
+res.pca$ind.sup
+```
+```{r}
+p <- fviz_pca_ind(res.pca, col.ind.sup = "blue", repel = TRUE)
+p <- fviz_add(p, res.pca$quali.sup$coord, color = "red")
+p
+```
+```{r}
+res.pca$quali
+```
+```{r}
+fviz_pca_ind(res.pca, habillage = 13,
+             addEllipses =TRUE, ellipse.type = "confidence",
+             palette = "jco", repel = TRUE) 
+```
+```{r}
+# Visualize variable with cos2 >= 0.6
+fviz_pca_var(res.pca, select.var = list(cos2 = 0.6))
+# Top 5 active variables with the highest cos2
+fviz_pca_var(res.pca, select.var= list(cos2 = 5))
+# Select by names
+name <- list(name = c("Long.jump", "High.jump", "X100m"))
+fviz_pca_var(res.pca, select.var = name)
+# top 5 contributing individuals and variable
+fviz_pca_biplot(res.pca, select.ind = list(contrib = 5), 
+               select.var = list(contrib = 5),
+               ggtheme = theme_minimal())
+```
+```{r}
+# Print the plot to a pdf file
+#pdf("myplot.pdf")
+#print(myplot)
+#dev.off()
+```
+```{r}
+# Scree plot
+scree.plot <- fviz_eig(res.pca)
+# Plot of individuals
+ind.plot <- fviz_pca_ind(res.pca)
+# Plot of variables
+var.plot <- fviz_pca_var(res.pca)
+```
+```{r}
+pdf("PCA.pdf") # Create a new pdf device
+print(scree.plot)
+print(ind.plot)
+print(var.plot)
+dev.off() # Close the pdf device
+```
+```{r}
+# Print scree plot to a png file
+png("pca-scree-plot.png")
+print(scree.plot)
+dev.off()
+# Print individuals plot to a png file
+png("pca-variables.png")
+print(var.plot)
+dev.off()
+# Print variables plot to a png file
+png("pca-individuals.png")
+print(ind.plot)
+dev.off()
+```
+```{r}
+library(ggpubr)
+ggexport(plotlist = list(scree.plot, ind.plot, var.plot), 
+         filename = "PCA.pdf")
+```
+```{r}
+ggexport(plotlist = list(scree.plot, ind.plot, var.plot), 
+         nrow = 2, ncol = 2,
+         filename = "PCA.pdf")
+ggexport(plotlist = list(scree.plot, ind.plot, var.plot),
+         filename = "PCA.png")
+```
+```{r}
+# Export into a TXT file
+write.infile(res.pca, "pca.txt", sep = "\t")
+# Export into a CSV file
+write.infile(res.pca, "pca.csv", sep = ";")
+```
+```{r}
+res.pca <- prcomp(iris[, -5], scale. = TRUE)
+res.pca <- princomp(iris[, -5], cor = TRUE)
+library("ade4")
+res.pca <- dudi.pca(iris[, -5], scannf = FALSE, nf = 5)
+library("ExPosition")
+res.pca <- epPCA(iris[, -5], graph = FALSE)
+```
+```{r}
+fviz_eig(res.pca)     # Scree plot
+fviz_pca_ind(res.pca) # Graph of individuals
+fviz_pca_var(res.pca) # Graph of variables
+```
+
