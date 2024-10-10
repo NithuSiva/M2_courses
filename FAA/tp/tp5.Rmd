@@ -3,76 +3,106 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-
+#Exercice 1
 ```{r}
 
-library(tree)
-
+library(rpart)
+library(rpart.plot)
 data <- data.frame(
-  Météo = c("soleil", "soleil", "soleil", "soleil", "nuages", "nuages", "nuages", "nuages", "soleil"),
+  Meteo = c("soleil", "soleil", "soleil", "soleil", "nuages", "nuages", "nuages", "nuages", "soleil"),
   Amis = c("présents", "absents", "présents", "absents", "absents", "présents", "absents", "présents", "absents"),
   Vent = c("faible", "fort", "fort", "faible", "faible", "fort", "fort", "faible", "faible"),
   Jour = c("week-end", "semaine", "semaine", "semaine", "week-end", "week-end", "semaine", "week-end", "week-end"),
-  Décision = c("oui", "non", "non", "oui", "non", "non", "non", "oui", "non")
+  Decision = c("oui", "non", "non", "oui", "non", "non", "non", "oui", "non")
 )
 
 head(data)
 
 ```
+
+
+
 ```{r}
 
-col_m <- as.factor(data$Météo)
-freq_m <- table(col_m) / length(col_m)
-H_meteo <- -sum(freq_m * log2(freq_m))
-H_meteo <- 0.9
-col_a <- as.factor(data$Amis)
-freq_a <- table(col_a) / length(col_a)
-H_amis <- -sum(freq_a * log2(freq_a))
-H_amis <- 0.84
+entropie <- function(y) {
+  p <- table(y) / length(y)
+  if (any(p == 0)) {
+    return(0)
+  }
+  return(-sum(p * log2(p)))
+}
 
-col_v <- as.factor(data$Vent)
-freq_v <- table(col_v) / length(col_v)
-H_vent <- -sum(freq_v * log2(freq_v))
-H_vent <- 0.5
+entropie_cond <- function(X, y) {
+  levels_X <- unique(X)
+  e_cond <- 0
+  for (level in levels_X) {
+    subset_y <- y[X == level]
+    if (length(subset_y) > 0) {  
+      e_cond <- e_cond + (length(subset_y) / length(y)) * entropie(subset_y)
+    }
+  }
+  return(e_cond)
+}
 
-col_j <- as.factor(data$Jour)
-freq_j <- table(col_j) / length(col_j)
-H_jour <- -sum(freq_j * log2(freq_j))
-H_jour <- 0.99
+entropie_decision <- entropie_cond(data$Meteo, data$Decision)
+entropie_meteo <- entropie_cond(data$Meteo, data$Decision)
+entropie_amis <- entropie_cond(data$Amis, data$Decision)
+entropie_vent <- entropie_cond(data$Vent, data$Decision)
+entropie_jour <- entropie_cond(data$Jour, data$Decision)
 
-print(paste(H_meteo, H_amis, H_vent, H_jour))
+cat("Entropie conditionnelle (Météo) : ", entropie_meteo, "\n")
+cat("Entropie conditionnelle (Amis) : ", entropie_amis, "\n")
+cat("Entropie conditionnelle (Vent) : ", entropie_vent, "\n")
+cat("Entropie conditionnelle (Jour) : ", entropie_jour, "\n")
 
 ```
+```{r}
 
+arbre_decision <- rpart(Decision ~ Meteo + Amis + Jour + Vent, data = data,  method = "class", control = rpart.control(minsplit = 1, cp = 0.01))
+rpart.plot(arbre_decision, type = 4, extra = 2)
+```
+
+
+
+#Exercice 2
 ```{r}
 
 library(rpart)
 
-data <- data.frame(
-  Météo = c("soleil", "nuages", "soleil", "soleil", "nuages"),
+data2 <- data.frame(
+  Meteo = c("soleil", "nuages", "soleil", "soleil", "nuages"),
   Amis = c("présents", "absents", "absents", "absents", "présents"),
   Vent = c("fort", "faible", "faible", "faible", "faible"),
   Jour = c("week-end", "semaine", "week-end", "semaine", "semaine"),
-  Décision = c("non", "non", "oui", "non", "oui")
+  Decision = c("non", "non", "oui", "non", "oui")  
 )
 
-# Créer l'arbre de décision
-arbre_decision <- rpart(Vent ~ + Amis  + Jour + Météo, data = data, method = "class", minsplit = 1)
+data2$Meteo <- as.factor(data2$Meteo)
+data2$Amis <- as.factor(data2$Amis)
+data2$Vent <- as.factor(data2$Vent)
+data2$Jour <- as.factor(data2$Jour)
+data2$Decision <- as.factor(data2$Decision)
 
-# Visualiser l'arbre de décision
-rpart.plot(arbre_decision)
+
+arbre_decision <- rpart(Decision ~ Meteo + Amis + Jour + Vent, data = data2,  method = "class", control = rpart.control(minsplit = 1, cp = 0.01))
+rpart.plot(arbre_decision, type = 4, extra = 2)
+
 
 ```
 
 
 ```{r}
 
-cp_a_prendre <- arbre_decision$cptable[2, "CP"]
+n_noeuds_avant <- sum(arbre_decision$frame$var != "<leaf>")
+cat("Nombre de nœuds avant l'élagage :", n_noeuds_avant, "\n")
 
-# 5. Élaguer l'arbre
-arbre_elague <- prune(arbre_decision, cp = cp_a_prendre)
+arbre_elague <- prune(arbre_decision, cp = arbre_decision$cptable[which.min(arbre_decision$cptable[, "xerror"]), "CP"])
 
-# 6. Afficher l'arbre élagué
-cat("Arbre élagué :\n")
-rpart.plot(arbre_elague)
+n_noeuds_apres <- sum(arbre_elague$frame$var != "<leaf>")
+cat("Nombre de nœuds après l'élagage :", n_noeuds_apres, "\n")
+
+n_noeuds_elagues <- n_noeuds_avant - n_noeuds_apres
+cat("Nombre de nœuds élagués :", n_noeuds_elagues, "\n")
+
+rpart.plot(arbre_elague, main = "Arbre élagué")
 ```

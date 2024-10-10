@@ -1,0 +1,67 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+
+
+activation_function <- function(x) {
+  if (x >= 0) {
+    return(1)
+  } else {
+    return(0)
+  }
+}
+
+perceptron <- function(x, d, learning_rate, max_iterations) {
+
+  n <- ncol(x) - 1 
+  w <- rep(0, n)    
+  bias <- 0         
+  n
+  for (epoch in 1:max_iterations) { 
+    error_count <- 0  
+    for (j in 1:nrow(x)) {
+      x_j <- x[j, -1]      
+      d_j <- d[j]          
+      somme <- sum(w * x_j) + bias 
+      o <- activation_function(somme) 
+      if (o != d_j) {
+        w <- w + learning_rate * (d_j - o) * x_j 
+        bias <- bias + learning_rate * (d_j - o)  
+        error_count <- error_count + 1 
+      }
+    }
+    if (error_count == 0) {
+      cat("Convergence atteinte après", epoch, "itérations.\n")
+      break
+    }
+  }
+  return(list(weights = w, bias = bias))  
+}
+
+x <- matrix(c(1, 1, 2,  
+              2, 1, 1,  
+              1, 2, 3), 
+            ncol = 3, byrow = TRUE)
+
+d <- c(0, 1, 1)  
+
+
+learning_rate <- 0.1  
+max_iterations <- 100 
+
+
+# Exécution de l'algorithme Perceptron
+weights <- perceptron(x, d, learning_rate, max_iterations)
+
+
+# Affichage des poids finaux
+cat("Poids finaux :\n", weights$weights, "\n")  
+cat("Biais final :", weights$bias, "\n")  
+
+
+```
+

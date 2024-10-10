@@ -1,0 +1,1307 @@
+**Résumé**: - Exploration puis modélisation de données climatiques en utilisant R. - L'objectif est de prévoir pour le lendemain un possible dépassement d'un seuil de concentration en ozone à partir d'une prévision déterministe sur un maillage grossier et de variables climatiques locales. - Estimation par différentes méthodes : régression [linéaire](http://wikistat.fr/pdf/st-m-app-select.pdf) ou [logistique](http://wikistat.fr/pdf/st-m-app-rlogit.pdf), [analyse discriminante](http://wikistat.fr/pdf/st-m-app-add.pdf), [arbre de décision](http://wikistat.fr/pdf/st-m-app-cart.pdf), [réseau de neurones](http://wikistat.fr/pdf/st-m-app-rn.pdf), [agrégation de modèle](http://wikistat.fr/pdf/st-m-app-agreg.pdf), [SVM](http://wikistat.fr/pdf/st-m-app-svm.pdf). - Comparaison des [erreurs de prévision](http://wikistat.fr/pdf/st-m-app-risque.pdf) sur un échantillon test puis des courbes ROC. - Industrialisation avec le package `caret` et itération sur plusieurs échantillons tests pour analyser la distribution de l'erreur de prévision.
+
+**Avertissement**
+
+-   Ce tutoriel est découpé en séances / épisodes de travaux dirigés synchronisées avec le cours d'apprentissage machine.
+-   Réfléchir aux réponses aux questions marquées **Question**.
+-   Ce calepin est complété par celui en Python (à faire *après*, ou en parallèle) afin de comparer les performances respectives des deux environnements.
+
+## Introduction
+
+L'objectif, sur ces données, est d'améliorer la prévision déterministe (MOCAGE), calculée par les services de MétéoFrance, de la concentration d'ozone dans certaines stations de prélèvement. Il s'agit d'un problème dit d'*adaptation statistique* d'une prévision locale de modèles à trop grande échelle en s'aidant d'autres variables également gérées par MétéoFrance, mais à plus petite échelle (température, force du vent...). C'est une première façon de concevoir de l'*IA hybride* entre un modèle déterministe et un algorithme d'apprentissage automatique. Plus précisément, deux variables peuvent être prévues : soit la concentration quantitative d'ozone, soit le dépassement (qualitatif) d'un certain seuil fixé à 150 $\mu g$. Dans chaque cas, deux approches sont considérées : soit prévoir la *concentration quantitative* puis en déduire l'éventuel dépassement ou bien prévoir directement le *dépassement*. Dans le premier cas, il s'agit d'abord d'une *régression* tandis que dans le deuxième il s'agit d'un problème de *discrimination* à deux classes ou de régression logistique.
+
+La question posée est donc: quelles sont les meilleures méthodes et stratégies pour prévoir la concentration d'ozone du lendemain d'une part et l'occurrence d'un pic de pollution d'autre part.
+
+On se propose de tester différentes méthodes : régression [logistique](http://wikistat.fr/pdf/st-m-app-rlogit.pdf), [analyse discriminante](http://wikistat.fr/pdf/st-m-app-add.pdf), [réseau de neurones](http://wikistat.fr/pdf/st-m-app-rn.pdf), [arbre de décision](http://wikistat.fr/pdf/st-m-app-cart.pdf), [agrégation d'arbres](http://wikistat.fr/pdf/st-m-app-agreg.pdf) (bagging, boosting, random forest), [SVM](http://wikistat.fr/pdf/st-m-app-svm.pdf). L'objectif final, à ne pas perdre de vue, est la comparaison de ces méthodes afin de déterminer la plus efficace pour répondre au problème de prévision. Ceci passe par la mise en place d'un protocole très strict afin de s'assurer d'un minimum d'objectivité pour cette comparaison.
+
+Toutes les opérations sont réalisées dans R avec l'appui de bibliothèques complémentaires éventuellement à télécharger : \* Episode 1 : ggplot2, tidyverse, gridExtra, corrplot, FactoMineR, factoextra, glmnet, ggfortify, pROC, \* Pour les autres épisodes : mlbench, MASS, boot, class, e1071, rpart, partykit, nnet, ipred, gbm, randomForest, caret, doParallel, xgboost, missForest, Rlof, dbscan, kernlab.
+
+Python (consulter le [calepin](https://github.com/wikistat/Apprentissage/blob/master/Pic-ozone/Apprent-Python-Ozone.ipynb)) conduit à des résultats comparables mais moins complets pour leur interprétation. En particulier, l'absence du type *DataFrame* dans la librairie scikit-learn n'autorise pas une sélection fine des variables dans les modèles statistiques usuels. En revanche, l'exécution de la validation croisée Monte Carlo est plus rapide en python.
+
+# <FONT COLOR="Red">Épisode 1 : Statistiques descriptives et modèles linéaires</font>
+
+```{r}
+# Chargement des librairies nécessaires
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(GGally)
+library(plotly)
+library(corrplot)
+library(reshape2)
+library(FactoMineR) 
+library(factoextra)
+library(glmnet) 
+library(ggfortify)
+library(pROC)
+library(ROCR)
+```
+
+## Prise en charge des données
+
+Les données ont été extraites et mises en forme par le service concerné de Météo France. Elles sont décrites par les variables suivantes :
+
+-   **JOUR** : type de jour ; férié (1) ou pas (0) ;
+-   **O3obs** : concentration d'ozone effectivement observée le lendemain à 17h locales correspondant souvent au maximum de pollution observée ;
+-   **MOCAGE** : prévision de cette pollution obtenue par un modèle déterministe de mécanique des fluides (équation de Navier et Stockes);
+-   **TEMPE** : température prévue par MétéoFrance pour le lendemain 17h ;
+-   **RMH2O** : rapport d'humidité ;
+-   **NO2** : concentration en dioxyde d'azote ;
+-   **NO** : concentration en monoxyde d'azote ;
+-   **STATION** : lieu de l'observation : Aix-en-Provence, Rambouillet, Munchhausen, Cadarache et Plan de Cuques ;
+-   **VentMOD** : force du vent ;
+-   **VentANG** : orientation du vent.
+
+Ce sont des données "propres", sans trous, bien codées et de petites tailles. Elles présentent donc avant tout un caractère pédagogique car permettant de décliner puis comparer toutes les approches de régression et classification supervisée.
+
+**Attention**: Même si les données sont de qualité, une étude exploratoire préalable est toujours nécessaire pour se familiariser avec les données et les préparer à la phase de modélisation.
+
+```{r}
+# Lecture des données
+# path="http://www.math.univ-toulouse.fr/~besse/Wikistat/data/"
+path <- ""
+ozone <- read.table(paste(path, "depSeuil.dat", sep = ""),
+                    sep = ",", header = TRUE)
+# Premières lignes du jeu de données
+head(ozone)
+# Vérification du contenu
+summary(ozone)
+```
+
+```{r}
+# Changement du type des variables qualitatives en facteur
+ozone[, "JOUR"] <- as.factor(ozone[, "JOUR"])
+ozone[, "STATION"] <- as.factor(ozone[, "STATION"])
+```
+
+```{r}
+# Vérification dans le summary
+summary(ozone)
+```
+
+## Exploration élémentaire
+
+### Statistiques unidimensionnelles
+
+**Question** Précisez la nature des différentes variables. Il est nécessaire d'en étudier la distribution. Notez la symétrie ou non de celles-ci.
+
+**Réponse**
+
+-   O3obs (g1) :
+
+La distribution est asymétrique positive, avec une longue queue à droite. La majorité des observations sont concentrées autour de la médiane, avec des valeurs extrêmes plus élevées.
+
+-   NO2 (g2) :
+
+Également asymétrique positive, avec une longue queue vers les valeurs plus élevées. La plupart des valeurs sont faibles, mais il y a des observations extrêmes de NO2.
+
+-   MOCAGE (g3) :
+
+La distribution suit une forme similaire à celle de O3obs, avec une asymétrie positive, indiquant que le modèle MOCAGE prédit des valeurs d'ozone plus élevées pour certaines observations.
+
+-   TEMPE (g4) :
+
+La distribution de la température semble plus symétrique, bien que légèrement étalée, indiquant que les températures moyennes sont souvent observées, mais il y a quelques valeurs très élevées.
+
+-   RMH2O (g5) :
+
+Asymétrie positive : la plupart des observations de l'humidité se concentrent sur des valeurs faibles, avec quelques valeurs plus élevées (longue queue à droite).
+
+-   NO (g6) :
+
+Distribution fortement asymétrique positive, avec beaucoup de valeurs proches de zéro, et quelques valeurs extrêmes de NO.
+
+-   VentMOD (g7) :
+
+La distribution de la force du vent présente une asymétrie positive également, avec la majorité des valeurs faibles, mais quelques observations avec des vents forts.
+
+-   VentANG (g8) :
+
+Distribution plus uniforme et symétrique, ce qui est logique pour une variable d'angle qui devrait être répartie autour de 0.
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+g1<-ggplot(ozone,aes(x=O3obs))+
+  geom_histogram(aes(y=after_stat(density)))+
+  geom_density(alpha=.2, col="blue") 
+g2<-ggplot(ozone,aes(x=NO2))+
+  geom_histogram(aes(y=..density..))+
+  geom_density(alpha=.2, col="blue") 
+
+grid.arrange(g1,g2,ncol=2)
+```
+
+```{r}
+# Même chose pour les autres variables
+g3<-ggplot(ozone,aes(x=MOCAGE))+geom_histogram(aes(y=..density..))+geom_density(alpha=.2, col="blue") 
+g4<-ggplot(ozone,aes(x=TEMPE))+geom_histogram(aes(y=..density..))+geom_density(alpha=.2, col="blue") 
+g5<-ggplot(ozone,aes(x=RMH2O))+geom_histogram(aes(y=..density..))+geom_density(alpha=.2, col="blue") 
+g6<-ggplot(ozone,aes(x=NO))+geom_histogram(aes(y=..density..))+geom_density(alpha=.2, col="blue") 
+g7<-ggplot(ozone,aes(x=VentMOD))+geom_histogram(aes(y=..density..))+geom_density(alpha=.2, col="blue") 
+g8<-ggplot(ozone,aes(x=VentANG))+geom_histogram(aes(y=..density..))+geom_density(alpha=.2, col="blue") 
+
+grid.arrange(g3,g4,g5,g6,g7,g8,ncol=3)
+rm(g1,g2,g3,g4,g5,g6,g7,g8)
+```
+
+### Transformations de variables
+
+Des transformations sont proposées pour rendre certaines distributions plus symétriques et ainsi plus "gaussiennes". C'est nécessaire pour certaines méthodes à venir de modélisation (linéaires), pas pour toutes (arbres).
+
+```{r}
+
+g1 <- ggplot(ozone, aes(x=RMH2O)) +
+  geom_histogram(aes(y=..density..), bins=30, fill="orange", alpha=0.6) +
+  geom_density(col="blue", linewidth=1) +
+  ggtitle("Distribution de RMH2O")
+
+
+# NO2 vs LNO2 (logarithme)
+g3 <- ggplot(ozone, aes(x=NO2)) +
+  geom_histogram(aes(y=..density..), bins=30, fill="orange", alpha=0.6) +
+  geom_density(col="blue", linewidth=1) +
+  ggtitle("Distribution de NO2")
+
+
+
+# NO vs LNO (logarithme)
+g5 <- ggplot(ozone, aes(x=NO)) +
+  geom_histogram(aes(y=..density..), bins=30, fill="orange", alpha=0.6) +
+  geom_density(col="blue", linewidth=1) +
+  ggtitle("Distribution de NO")
+
+
+grid.arrange(g1, g3, g5, ncol=2)
+
+
+```
+
+```{r}
+ozone[, "SRMH2O"] <- sqrt(ozone[, "RMH2O"])
+ozone[, "LNO2"] <- log(ozone[, "NO2"])
+ozone[, "LNO"] <- log(ozone[, "NO"])
+
+
+g2 <- ggplot(ozone, aes(x=SRMH2O)) +
+  geom_histogram(aes(y=..density..), bins=30, fill="green", alpha=0.6) +
+  geom_density(col="blue", linewidth=1) +
+  ggtitle("Distribution de SRMH2O (sqrt)")
+
+g4 <- ggplot(ozone, aes(x=LNO2)) +
+  geom_histogram(aes(y=..density..), bins=30, fill="green", alpha=0.6) +
+  geom_density(col="blue", linewidth=1) +
+  ggtitle("Distribution de LNO2 (log)")
+
+
+g6 <- ggplot(ozone, aes(x=LNO)) +
+  geom_histogram(aes(y=..density..), bins=30, fill="green", alpha=0.6) +
+  geom_density(col="blue", linewidth=1) +
+  ggtitle("Distribution de LNO (log)")
+
+grid.arrange(g2, g4, g6, ncol=2)
+```
+
+**Question** Vérifiez l'opportunité de ces transformations puis retirez les variables initiales
+
+**Réponse**
+
+-   SRMH2O, LNO2 et LNO:
+
+On remarque qu'elles sont devenue plus symetrique et concentrée autour de la moyenne
+
+```{r}
+
+ozone <- ozone[, c(1:4, 8:13)]
+```
+
+On construit maintenant la variable de dépassement de seuil `DepSeuil` pour obtenir le fichier qui sera effectivement utilisé.
+
+```{r}
+ozone[, "DepSeuil"] <- as.factor(ozone[, "O3obs"] > 150)
+summary(ozone)
+```
+
+### Corrélations des variables
+
+**Question** Que dire sur les relations des variables 2 à 2 ?
+
+```{r}
+library(GGally)
+
+ggpairs(ozone[, c(2:4, 6:10)])
+```
+
+**Réponse**
+
+O3obs et MOCAGE présentent une corrélation modérée à forte (0.593), ce qui pourrait indiquer que le modèle MOCAGE suit de près les observations d'ozone.
+
+-   O3obs et TEMPE ont une corrélation plus faible (0.609), suggérant que la température a un lien mais n'est pas le seul facteur influençant les niveaux d'ozone observés.
+
+-   VentMOD et VentANG ont une corrélation négative (-0.316), ce qui est intéressant car cela indique que lorsque la vitesse du vent change, l'angle du vent a tendance à changer dans la direction opposée.
+
+-   LNO2 et LNO montrent une corrélation très forte (0.919), ce qui est prévisible car le NO2 et le NO sont chimiquement liés.
+
+-   Les étoiles (\*\*\*,\*\*, \* ) indiquent le niveau de significativité des corrélations, avec trois étoiles indiquant une très forte significativité statistique. Cela aide à comprendre la force et l'importance des relations entre les variables.
+
+**Question** Complétez en visualisant les corrélations avec la fonction `corrplot()` (package `corrplot`). Quelle est la limite de ce type de diagnostic numérique : quel type de corrélation est mesuré ?
+
+```{r}
+
+library(corrplot)
+corr_matrix <- cor(ozone[, c(2:4, 6:10)], use = "complete.obs")
+
+corrplot(corr_matrix, method = "circle", type = "lower", order = "hclust", tl.col = "black", tl.srt = 45)
+
+```
+
+**Réponse**
+
+La matrice de corrélation affichée utilise probablement la corrélation de Pearson, qui mesure la relation linéaire entre deux variables. La limite de ce type de diagnostic est qu'il ne détecte que les relations linéaires.
+
+### Analyse en composantes principales
+
+Les commandes suivantes permettent de réaliser une [analyse en composantes principales](http://wikistat.fr/pdf/st-m-explo-acp.pdf) (ACP) sur les seules variables quantitatives. Par ailleurs la variable à modéliser (O3obs, concentration observée) n'est pas utilisée.
+
+```{r}
+# ACP réduite
+library(FactoMineR)
+acp <- PCA(ozone[, c(11,2:4, 6:10)], scale.unit = TRUE,
+           graph = FALSE, quali.sup = 1, quanti.sup = 2, ncp = 7)
+# Décroissance des valeurs propres
+library(factoextra)
+g1<-fviz_eig(acp, addlabels = TRUE, ylim = c(0, 40))
+library(reshape2)
+g2<-ggplot(melt(acp$ind$coord),aes(x=Var2,y=value))+
+  geom_boxplot()+
+  xlab("")
+grid.arrange(g1,g2,ncol=2)
+# 
+library(corrplot)
+corrplot(acp$var$cor, is.corr=FALSE,method="ellipse")
+```
+
+```{r}
+help(PCA)
+```
+
+```{r}
+fviz_pca_var(acp)
+fviz_pca_ind(acp,col.ind="contrib",label="none",gradient.cols = c("white", "#2E9FDF", "#FC4E07" ))
+fviz_pca_var(acp,axes=c(1,3))
+fviz_pca_ind(acp,col.ind="contrib",label="none",gradient.cols = c("white", "#2E9FDF", "#FC4E07" ),axes=c(1,3))
+```
+
+**Question** Que représentent ces différents graphiques?
+
+**Réponse**
+
+-   Le graphique "Scree plot" illustre la part de la variance totale expliquée par chaque composante principale dans une PCA.
+
+-   diagramme en boîte (boxplot) de la distribution des scores de chaque composante principale pour les observations
+
+-   Graphiques des variables - PCA: Il représente les variables dans l'espace des premières composantes principales a deux dimensions.
+
+-   Graphiques des individus - PCA: Il représente les individus dans l'espace des premières composantes principales a deux dimensions.
+
+-   Graphiques des variables - PCA a trois dimensions
+
+-   Graphiques des individus a trois dimensions
+
+# La troisième dimension apporte moins d'information et est donc moins importante.
+
+**Question** Que dire du choix du nombre de dimensions, des valeurs atypiques?
+
+**Réponse**
+
+Souvent, les deux premiere dimensions suffissent a expliqué la majorité de la variance.
+
+**Question** Que dire de la structure de corrélation des variables ? Est-elle intuitive ?
+
+**Réponse**
+
+Le graphique de corrélation des variables (fviz_pca_var()) montre comment les variables sont liées entre elles en termes de corrélation. Les flèches orientées dans la même direction ou presque, confirme des corrélations, elle ne semble pas intuitive au premier regard.
+
+Même graphe en coloriant selon le dépassement de seuil.
+
+```{r}
+fviz_pca_ind(acp, label="none", habillage=1)
+```
+
+L'objectif est donc de définir une surface séparant les deux classes.
+
+**Question** Une discrimination linéaire (hyperplan) semble-t-elle possible ?
+
+**Réponse**
+
+En observant le graphique, il ne semble pas y avoir une séparation nette et claire qui permettrait de définir un hyperplan discriminant linéairement les deux groupes définis par la variable DepSeuil.
+
+### Clustering
+
+Ce n'est pas utile ici mais une classification non supervisée est facile à obtenir. Par exemple en 2 classes, par l'algorithme des K-means. Donne-t-elle la même information ?
+
+**Réponse** La classification non supervisée, comme celle réalisée par l'algorithme K-means, vise à regrouper les données en un certain nombre de clusters basés sur la similarité des caractéristiques. Elle ne fournit pas directement la même information qu'une PCA, car son objectif est de regrouper les individus plutôt que de réduire la dimensionnalité.
+
+```{r}
+km.ozone <- kmeans(ozone[, c(3:4, 6:10)], centers = 2)
+# Représentation dans les coordonnées de l'acp
+acp2 <- PCA(cbind(clus = as.factor(km.ozone$cluster),
+          ozone[, c(11, 3:4, 6:10)]), scale.unit = TRUE,
+          graph = FALSE, quali.sup = 1:2, ncp = 7)
+fviz_pca_ind(acp2, label="none", habillage="clus")
+```
+
+## Protocole de comparaison
+
+### Stratégie
+
+La recherche d'une meilleure méthode de prévision suit le protocole suivant.
+
+1.  Étapes descriptives préliminaires uni- et multidimensionnelle visant à repérer les incohérences, les variables non significatives ou de distribution exotique, les individus non concernés ou atypiques... et à étudier les structures des données. Ce peut être aussi la longue étape de construction de variables, attributs ou *features* spécifiques des données.
+2.  Procéder à un tirage aléatoire d'un échantillon *test* qui ne sera utilisé que lors de la *dernière étape* de comparaison des méthodes.
+3.  La partie restante est l'échantillon d'*apprentissage* pour l'estimation des paramètres des modèles.
+4.  Pour chacune des méthodes, optimiser la complexité des modèles en minimisant une estimation "sans biais" de l'erreur de prévision, par exemple par [*validation croisée*](http://wikistat.fr/pdf/st-m-app-risque-estim.pdf):
+    -   Variables et interactions à prendre en compte dans la régression linéaire ou logistique;
+    -   variables et méthode pour l'analyse discriminante;
+    -   nombre de feuilles dans l'arbre de régression ou de classification;
+    -   architecture (nombre de neurones, pénalisation) du perceptron;
+    -   algorithme d'agrégation,
+    -   noyau et pénalisation des SVMs.
+5.  Comparaison des qualités de prévision sur la base du taux de mal classés pour le seul échantillon test qui est resté à l'écart de tout effort ou "acharnement" pour l'optimisation des modèles.
+
+### Remarques
+
+-   En cas d'échantillon relativement "petit" il est recommandé d'itérer la procédure de découpage apprentissage / test, afin de réduire la variance (moyenne) des estimations des erreurs de prévision.
+
+**Question** Comment appelle-t-on cette procédure spécifique de validation croisée ?
+
+**Réponse**
+
+La procédure spécifique de validation croisée s'appelle validation croisée en K blocs ou K-fold cross-validation.
+
+-   *Attention* : ne pas "tricher" en modifiant le modèle obtenu lors de l'étape précédente afin d'améliorer le résultat sur l'échantillon test!
+-   Le critère utilisé dépend du problème : erreur quadratique, taux de mauvais classement, entropie, AUC (aire sous la courbe ROC), indice de Pierce, *log loss function*...
+
+### Extraction des échantillons
+
+Les commandes ci-dessous réalisent l'extraction du sous-ensemble des données d'apprentissage et de test.
+
+Utilisez trois chiffres au hasard, et **remplacez** "111" ci-dessous, comme initialisation du générateur de nombres aléatoires. Attention, chaque participant tire un échantillon différent ; il est donc "normal" de ne pas obtenir les mêmes modèles, les mêmes résultats!
+
+```{r}
+set.seed(111) # initialisation du générateur
+# Extraction des échantillons
+test.ratio <- .2   # part de l'échantillon test
+npop <- nrow(ozone) # nombre de lignes dans les données
+nvar <- ncol(ozone) # nombre de colonnes
+# taille de l'échantillon test
+ntest <- ceiling(npop * test.ratio) 
+# indices de l'échantillon test
+testi <- sample(1:npop, ntest)
+# indices de l'échantillon d'apprentissage
+appri <- setdiff(1:npop, testi) 
+
+```
+
+Construction des échantillons pour la régression: prévision de la concentration en ozone.
+
+```{r}
+# construction de l'échantillon d'apprentissage
+datappr <- ozone[appri, -11] 
+# construction de l'échantillon test
+datestr <- ozone[testi, -11] 
+# vérification
+str(datappr)
+str(datestr)
+#summary(datappr) 
+```
+
+Construction des échantillons pour la discrimination: prévision de dépassement.
+
+```{r}
+# construction de l'échantillon d'apprentissage
+datappq <- ozone[appri,-2]
+# construction de l'échantillon test 
+datestq <- ozone[testi,-2] 
+
+# vérification
+str(datappq)
+str(datestq)
+#summary(datappq)
+```
+
+**Remarque** : Nous avons ici "manuellement" fait la construction des échantillons à des fins pédagogiques. En pratique, on peut utiliser des fonctions de R qui font ce travail, en particulier la fonction `createDataPartition` de la librairie `caret`.
+
+Enfin, avant de passer aux différents algorithmes, définissons une fonction traçant le graphe des résidus avec des couleurs et des échelles fixes sur les axes.
+
+```{r}
+gplot.res <- function(x, y, titre = "titre"){
+    ggplot(data.frame(x=x, y=y),aes(x,y))+
+    geom_point(col = "blue")+xlim(0, 250)+ylim(-150, 150)+
+    ylab("Résidus")+ xlab("Valeurs prédites")+
+    ggtitle(titre)+
+    geom_hline(yintercept = 0,col="green")
+}
+```
+
+## [Prévision par modèle linéaire Gaussien](http://wikistat.fr/pdf/st-m-app-select.pdf)
+
+Le premier modèle à tester est un simple modèle linéaire Gaussien mais, comme certaines variables sont qualitatives, il s'agit d'une analyse de covariance. D'autre part, on s'intéresse à savoir si des interactions sont à prendre en compte. Le modèle devient alors polynomial d'ordre 2 ou quadratique.
+
+### Modèle linéaire
+
+#### Sans sélection de variables
+
+Le modèle linéaire intégre ici des variables qualitatives; c'est dans ce cas une *analyse de covariance* estimée par la fonction `aov` mieux adaptée à ce modèle.
+
+```{r}
+# estimation du modèle sans interaction
+reg.lm <-aov(O3obs ~ . , data = datappr)
+# Extraction des résidus et des valeurs ajustées de ce modèle
+res.lm <- reg.lm$residuals
+fit.lm <- reg.lm$fitted.values
+# Graphe des résidus. 
+gplot.res(fit.lm,res.lm,"ANCOVA sans sélection de variables")
+```
+
+**Question** Que dire de la distribution de ces résidus ?
+
+**Réponse**
+
+La distribution des résidus semble aléatoire, ce qui est bon, mais il y a des signes d'une dispersion croissante des résidus avec des valeurs prédites plus élevées et quelques résidus extrêmes qui pourraient être des valeurs aberrantes. Cela pourrait indiquer que le modèle de régression pourrait être amélioré.
+
+**Question** La forme du nuage renseigne sur les hypothèses de linéarité du modèle et d'homoscédasticité. Que dire de la validité de ce modèle ?
+
+**Réponse**
+
+Le nuage des résidus montre des signes d'hétéroscédasticité, car la dispersion des résidus augmente avec les valeurs prédites, ce qui viole l'hypothèse d'homoscédasticité.
+
+Appréciez néanmoins sa significativité par la commande suivante.
+
+```{r}
+summary(reg.lm)
+```
+
+```{r}
+coef(reg.lm)
+```
+
+**Question** Ce premier modèle est comparé avec celui de la seule prévision déterministe MOCAGE. Qu'en conclure?
+
+**Réponse**
+
+Dans le tableau, plusieurs facteurs sont listés (comme JOUR, MOCAGE, TEMPE, etc.), avec leurs valeurs statistiques respectives. Les astérisques (\*\*\*, \*\*, \*) indiquent le niveau de signification statistique, avec plus d'astérisques indiquant des preuves plus fortes contre l'hypothèse nulle. Par exemple, "MOCAGE" et "TEMPE" ont des valeurs p très basses (indiquées par \< 2e-16 \*\*\*), suggérant que leurs effets sont statistiquement significatifs.
+
+```{r}
+# Graphe des résidus du modèle déterministe MOCAGE
+g1<-gplot.res(datappr[, "MOCAGE"],datappr[, "O3obs"]-datappr[, "MOCAGE"], "linéaire, MOCAGE seul")
+
+g2<-gplot.res(fit.lm, res.lm, "Linéaire, sans sélection")
+grid.arrange(g1,g2,ncol=2)
+```
+
+#### Sélection de variable par régularisation L1 (LASSO)
+
+```{r}
+library(glmnet)
+# avec des variables quantitatives seulement
+reg.lasso.quanti <- glmnet(y = datappr[, 2],
+                           x = as.matrix(datappr[, -c(1, 2, 5)]))
+# avec toutes les variables, créer d'abord la matrice d'expériences 
+# avec 'model.matrix' (penser à retirer l'intercept du modèle)
+x.mat <- model.matrix(O3obs ~ . - 1, data = datappr)
+reg.lasso <- glmnet(y = datappr$O3obs, x = x.mat)
+options(repr.plot.width = 12, repr.plot.height = 10)
+plot(reg.lasso, xvar = "lambda", label = TRUE)
+legend("topright", 
+       legend = paste(1:ncol(x.mat), " - ", colnames(x.mat)))
+```
+
+**Question** Que fait la commande model.matrix ? Comment sont gérées les variables catégorielles ?
+
+**Réponse**
+
+Elle permet de créer une matrice , cette matrice est composée de variables indépendantes sous forme numérique, prêtes à être utilisées pour l'analyse statistique ou la modélisation. Elle gère automatiquement la conversion des variables catégorielles en en variables muettes.
+
+```{r}
+#help(model.matrix)
+head(x.mat)
+```
+
+**Question** Que représentent les courbes ci-dessus, appelées "chemins de régularisation"?
+
+**Réponse**
+
+Les "chemins de régularisation" illustrent comment l'erreur de prédiction et le nombre de variables sélectionnées dans un modèle statistique changent à mesure que l'on ajuste la force de la pénalité pour la complexité du modèle.
+
+On s'intéresse ensuite au choix du paramètre de régularisation par validation croisée:
+
+```{r}
+reg.lasso.cv <- cv.glmnet(y = datappr[, 2], x = x.mat)
+#plot(reg.lasso.cv)
+autoplot(reg.lasso.cv)
+```
+
+```{r}
+library(glmnet)
+help(cv.glmnet)
+```
+
+**Question** Que représente les points gras ? Et la bande qui est autour ?
+
+**Réponse**
+
+Les points gras représentent généralement la moyenne de l'erreur de validation croisée pour chaque valeur de lambda et la bande autour des points gras représente l'intervalle de confiance ou l'écart-type de l'erreur de validation croisée pour chaque valeur de lambda. Cela donne une idée de la variabilité ou de l'incertitude de l'estimation de l'erreur pour chaque modèle. Un intervalle plus large suggère une plus grande incertitude et vice versa.
+
+**Question** Comment sont obtenues les valeurs
+
+**Réponse** - Génération de Valeurs de lambda :
+
+Lors de l'ajustement du modèle LASSO avec la fonction glmnet, une séquence de valeurs de lambda est générée. Ces valeurs déterminent le degré de régularisation appliqué au modèle.
+
+-   Validation Croisée :
+
+Avec cv.glmnet, une validation croisée est effectuée sur ces différentes valeurs de lambda. Pour chaque valeur de lambda testée, le modèle est ajusté, et l'erreur de validation croisée est calculée.
+
+-   Calcul de l'Erreur de Validation :
+
+Pour chaque valeur de lambda, l'erreur moyenne de validation croisée est calculée. Cela produit une courbe d'erreur en fonction des valeurs de lambda.
+
+-   Identification de lambda.min et lambda.1se :
+
+lambda.min : C'est la valeur de lambda qui minimise l'erreur de validation croisée. Elle est souvent marquée par une ligne verticale en pointillé dans le graphique.
+
+lambda.1se : C'est la plus grande valeur de lambda qui se situe à une unité d'écart-type au-dessus de l'erreur minimale (obtenue pour lambda.min). Cela permet d'obtenir un modèle plus simple tout en conservant une performance raisonnable.
+
+Ces deux valeurs sont automatiquement calculées par la fonction cv.glmnet.
+
+-   Conversion en log(lambda) :
+
+Étant donné que le graphique utilise l'échelle logarithmique pour lambda, les valeurs de lambda correspondantes à lambda.min et lambda.1se sont converties en log(lambda).
+
+```{r}
+# valeur estimée
+paste("CV estimate of lambda :", round(reg.lasso.cv$lambda.1se, 3))
+# modèle correspondant
+coef(reg.lasso.cv, s = "lambda.1se")
+```
+
+**Question** Combien restent-ils de coefficients non nuls. Vérifiez sur les chemins de régularisation.
+
+Il y'a trois coefficients non nuls MOCAGE, TEMPE et VentANG.
+
+**Question** Même question en choisissant l'autre valeur de lambda retenue par glmnet, i.e. `reg.lasso.cv$lambda.min`
+
+```{r}
+
+coef_non_nuls_min <- sum(coef(reg.lasso.cv, s = "lambda.min") != 0) - 1 
+print(paste("Nombre de coefficients non nuls avec lambda.min :", coef_non_nuls_min))
+```
+
+**Réponse**
+
+Nous obtenons 10 coefficients non nuls.
+
+```{r}
+# valeur estimée
+paste("CV estimate of lambda :", round(reg.lasso.cv$lambda.min, 3))
+# modèle correspondant
+coef(reg.lasso.cv, s = "lambda.min")
+
+plot(reg.lasso, xvar = "lambda", label = TRUE,xlim=c(-2,0),ylim=c(-5,40))
+abline(v=log(reg.lasso.cv$lambda.min),col="red")
+```
+
+On trace ensuite les résidus en fonction des valeurs prédites.
+
+```{r}
+# Extraction des valeurs ajustées et des résidus
+
+fit.lasso <- predict(reg.lasso.cv, s = "lambda.min", newx = x.mat)
+res.lasso <- datappr$O3obs - fit.lasso
+
+fit.lasso.1se <- predict(reg.lasso.cv, s = "lambda.1se", newx = x.mat)
+res.lasso.1se <- datappr$O3obs - fit.lasso.1se 
+
+# Graphe des résidus
+options(repr.plot.width = 12, repr.plot.height = 4)
+par(mfrow = c(1, 3))
+gplot.res(fit.lm, res.lm, "Linéaire, sans sélection")
+gplot.res(fit.lasso, res.lasso, "Linéaire, pénalité L1, lambda min")
+gplot.res(fit.lasso.1se, res.lasso.1se, "Linéaire, pénalité L1, lambda 1se") 
+```
+
+**Question** Commentez.
+
+**Réponse**
+
+-   Graphique Linéaire, sans sélection
+
+Les points des résidus sont dispersés autour de la ligne horizontale à zéro. Cela peut indiquer que le modèle linéaire sans sélection a capturé une certaine relation entre les variables, mais il peut également montrer une variabilité dans les erreurs, ce qui suggère qu'il y a encore des aspects des données que le modèle n'a pas bien saisis. Il y'a une Hétéroscédasticité.
+
+-   Graphique Linéaire, pénalité L1, lambda.min
+
+Les résidus sont assez similaires à ceux du modèle linéaire sans sélection. Cependant, on peut voir une légère amélioration dans la structure des résidus, car le Lasso tend à réduire l'impact des variables moins importantes.
+
+-   Graphique Linéaire, pénalité L1, lambda.1se
+
+Les points sont plus regroupés autour de zéro dans ce graphique indique que le modèle Lasso avec lambda.1se a peut-être réussi à réduire l'impact des outliers. En choisissant lambda.1se, il a écarté certaines variables moins significatives. Cela pourrait avoir pour effet de réduire la variabilité des résidus, car le modèle se concentre sur les relations les plus fortes.
+
+**Question** Calculez le critère MSE (moyenne des carrés des résidus) pour les deux modèles. Pourquoi celui obtenu par LASSO est-il moins bon ? Quel critère LASSO minimise t-il ?
+
+**Réponse** Le LASSO se concentre sur la minimisation du MSE tout en ajoutant une pénalité pour la complexité du modèle, le modèle LASSO n'inclut pas suffisamment d'informations pertinentes.
+
+```{r}
+paste("Modèle linéaire sans sélection:",mean(res.lm^2))
+paste("LASSO avec lambda.min:",mean(res.lasso^2))
+paste("LASSO avec lambda.1se:",mean(res.lasso.1se^2))
+```
+
+**Question** Estimez l'erreur du modèle linéaire simple sans sélection de variables par validation croisée. Comparez avec celle du LASSO. Qu'observez-vous?
+
+```{r}
+V=10 ; nV=floor(nrow(datappr)/V)
+S=sample(1:nrow(datappr),replace=FALSE)
+error.CV = c()
+for(v in 1:V)
+{ # Rq : les deux dernières obs sont tjs dans l'échantillon d'apprentissage...
+    datappr.learn=datappr[-c(S[(nV*(v-1)):(nV*v)]),] 
+    datappr.valid=datappr[c(S[(nV*(v-1)):(nV*v)]),]
+    error.CV=c(error.CV,mean((datappr.valid$O3obs-predict(aov(O3obs ~ ., data=datappr.learn),newdata=datappr.valid))^2))
+}
+mean(error.CV)
+
+print(reg.lasso.cv)
+```
+
+```{r}
+
+V = 10
+nV = floor(nrow(datappr) / V)
+S = sample(1:nrow(datappr), replace = FALSE)
+error.CV = c()
+
+for (v in 1:V) {
+  # Définition des jeux d'apprentissage et de validation pour chaque pli
+  datappr.learn = datappr[-c(S[(nV * (v - 1)):(nV * v)]), ]
+  datappr.valid = datappr[c(S[(nV * (v - 1)):(nV * v)]), ]
+  
+  # Ajustement du modèle linéaire sans sélection de variables
+  model.lm = aov(O3obs ~ ., data = datappr.learn)
+  
+  # Calcul des prédictions sur le jeu de validation
+  predictions = predict(model.lm, newdata = datappr.valid)
+  
+  # Calcul de l'erreur quadratique moyenne pour ce pli
+  mse_fold = mean((datappr.valid$O3obs - predictions) ^ 2)
+  
+  # Ajout de l'erreur du pli à la liste d'erreurs
+  error.CV = c(error.CV, mse_fold)
+}
+
+# Erreur moyenne sur les 10 plis
+mean.error.lm = mean(error.CV)
+mean.error.lm
+
+
+
+```
+
+**Réponse**
+
+LASSO minimise le MSE tout en appliquant une pénalisation, ce qui permet de sélectionner les variables les plus importantes. Le modèle LASSO avec lambda.min donne de meilleurs résultats (en termes de MSE) que le modèle linéaire sans sélection. LASSO minimise donc le compromis entre biais et variance et favorise des modèles plus simples tout en conservant une bonne précision.
+
+### Modèle quadratique
+
+L'étude suivante met en oeuvre toutes les interactions d'ordre 2 entre les variables. Il s'agit donc d'un modèle de régression quadratique. Il est estimé avec la fonction `glm()` qui permet une sélection automatique de modèle. La méthode descendante est utilisée mais celle pas-à-pas pourrait également l'être. Ce type de procédure n'est pas implémentée en python.
+
+#### Sélection de variables par critère AIC
+
+Sélection descendante: à chaque étape, chaque modèle est comparé à tous les sous-modèles possibles obtenus par suppression d'une des interactions ou une des variables, à condition qu'elle ne soit pas présente dans une interaction. La variable sélectionnée et supprimée est celle qui fait décroîre le critère considéré : AIC (*Akaïke Information Criterion*).
+
+**Question** Quel autre critère, équivalent à AIC dans le cas gaussien et de variance résiduelle connue, est utilisé en régression linéaire ?
+
+**Réponse**
+
+En régression linéaire, lorsque la variance résiduelle est connue et que le modèle est gaussien, le critère de sélection de modèle équivalent à l'AIC est le Critère d'Information de Bayes, ou BIC
+
+```{r}
+# Estimation du modèle avec toutes les interactions d'ordre 2
+reg.glm <- glm(O3obs ~ .^2, data = datappr)
+# Recherche du meilleur modèle au sens 
+# du critère d'Akaïke par méthode descendante
+reg.glm.step <- step(reg.glm, direction = "backward")
+```
+
+```{r}
+# Coefficients du modèle
+anova(reg.glm.step, test = "F")
+```
+
+#### Sélection de variable par régularisation L1 (LASSO)
+
+```{r}
+# Comparer avec un modèle quadratique avec pénalité L1
+x.mat2 <- model.matrix(O3obs ~ .^2 - 1, data = datappr)
+reg.lasso2.cv <- cv.glmnet(y = datappr[, "O3obs"], x = x.mat2)
+coef(reg.lasso2.cv, s = "lambda.1se")
+```
+
+```{r}
+# Extraction des valeurs ajustées et des résidus
+fit.glm <- reg.glm.step$fitted.values
+res.glm <- reg.glm.step$residuals
+fit.lasso2 <- predict(reg.lasso2.cv, s = "lambda.min", newx = x.mat2)
+res.lasso2 <- datappr$O3obs - fit.lasso2
+
+# Graphe des résidus
+g1<-gplot.res(fit.lm, res.lm, "linéaire")
+g2<-gplot.res(fit.lasso, res.lasso, "linéaire, pénalité L1")
+g3<-gplot.res(fit.glm, res.glm, "quadratique, backward AIC")
+g4<-gplot.res(fit.lasso2, res.lasso2, "quadratique, pénalité L1")
+grid.arrange(g1,g2,g3,g4,ncol=2,nrow=2)
+```
+
+On remarque que la présence de certaines interactions ou variables sont pertinentes au sens du critère d'Akaïke mais pas significative au sens du test de Fisher. Cette présence dans le modèle pourrait être plus finement analysée en considérant une estimation de l'erreur par validation croisée. L'idée serait de retirer une à une les variables ou interactions les moins significatives pour voir comment se comporte la validation croisée. D'autre part, si la procédure pas-à-pas conduit à un modèle différent, l'estimation de l'erreur par validation croisée permet également d'optimiser le choix.
+
+Ces raffinements ne s'avèrent pas efficaces sur ces données. Le modèle obtenu par minimisaiton du critère AIC est conservé.
+
+### Prévision de l'échantillon test
+
+Le modèle "optimal" obtenu par la méthode descendante est utilisé pour prédire l'échantillon test et estimer ainsi, sans biais, une erreur de prévision. Deux erreurs sont estimées : la première est celle quadratique pour la régression tandis que la deuxième est issue de la matrice de confusion qui croise les dépassements de seuils prédits avec ceux effectivement observés.
+
+#### Erreur de régression
+
+```{r}
+# Calcul des prévisions pour le modèle quadratique backward AIC
+pred.glm <- predict(reg.glm.step, newdata = datestr)
+# Erreur quadratique moyenne de prévision (MSE)
+sum((pred.glm - datestr[, "O3obs"])^2) / nrow(datestr)
+```
+
+```{r}
+# Erreur quadratique par MOCAGE
+sum((datestr[,"MOCAGE"] - datestr[,"O3obs"])^2) / nrow(datestr)
+```
+
+#### Erreur de classification (matrice de confusion)
+
+```{r}
+# Matrice de confusion pour la prévision du dépassement de seuil
+table(pred.glm > 150, datestr[, "O3obs"] > 150)
+```
+
+```{r}
+# Matrice de confusion pour la prévision du 
+# dépassement de seuil par MOCAGE
+table(datestr[, "MOCAGE"] > 150, datestr[, "O3obs"] > 150)
+```
+
+Noter ces erreurs pour les comparer avec celles obtenues par les autres méthodes. Noter l'asymétrie des erreurs.
+
+## [Prévision par modèle binomial](http://wikistat.fr/pdf/st-m-app-rlogit.pdf)
+
+Plutôt que de prévoir la concentration puis le dépassement, on peut se poser la question de savoir s'il ne serait pas pertinent de prévoir directement la présence ou l'absence d'un dépassement. La variable à modéliser étant binaire, c'est la régression logistique qui va être employée. Comme pour la régression, différentes stratégies de choix de modèle peuvent être utilisées et comparées avant d'estimer l'erreur de prévision sur l'échantillon test.
+
+### Régression logistique sans interaction
+
+```{r}
+# estimation du modèle complet
+log.lm <- glm(DepSeuil ~. , data = datappq, family = binomial)
+# significativité des paramètres
+anova(log.lm, test = "Chisq")
+```
+
+```{r}
+# Recherche d'un modèle optimal au sens d'Akaïke
+log.lm.step <- step(log.lm, direction = "backward")
+```
+
+```{r}
+# Modèle obtenu
+anova(log.lm.step, test = "Chisq")
+```
+
+```{r}
+# matrice de confusion de l'échantillon d'apprentissage et erreur apparente
+table(log.lm.step$fitted.values > 0.5, datappq[, "DepSeuil"])
+```
+
+### Régression logistique avec interactions
+
+Avec autant de variables et d'interactions donc de paramètres, l'estimation du modèle complet de régression logistique rencontre des soucis et affiche des *warnings* car certaines probabilité trop bien ajustés (0 ou 1) provoquent des divisions par 0. Ici une procédure *forward* ou mieux *stepwise* de sélection des variables et interactions conduit à des résultats raisonnables. Une méthode avec pénalisation L1 peut aussi être utilisée.
+
+```{r}
+# régression avec le modèle minimum
+log.qm <- glm(DepSeuil ~ 1, data = datappq,family = binomial)
+# algorithme stepwise en précisant le plus grand 
+# modèle possible
+log.qm.step1 <- step(log.qm, direction = "both",
+    scope = list(lower = ~1, upper = ~(JOUR + MOCAGE + TEMPE + 
+            STATION + VentMOD + VentANG + LNO2 + LNO + SRMH2O)^2), 
+    family=binomial)
+```
+
+```{r}
+anova(log.qm.step1, test = "Chisq")
+```
+
+### Prévision de l'échantillon test
+
+#### Matrice de confusion
+
+```{r}
+# Prévision du modèle quadratique
+pred.log <- predict(log.qm.step1, newdata = datestq, type = "response")
+# Matrice de confusion pour la prévision du 
+# dépassement de seuil
+table(pred.log > 0.5, datestq[, "DepSeuil"])
+```
+
+Comparer avec l'approche précédente. Mémoriser les résultats obtenus pour comparer avec les autres méthodes.
+
+#### Courbe ROC
+
+Il est également possible de construire une courbe ROC en association de la prévision obtenue à partir d'un modèle gaussien. En effet, la variation du seuil théorique de dépassement (150) va faire varier les proportions respectives des taux de vrais et faux positifs. Cela revient encore à faire varier le seuil d'une "proba" pour les valeurs de prévisions divisées par 300.
+
+```{r}
+options(repr.plot.width = 6, repr.plot.height = 6)
+par(mfrow = c(1, 1))
+rocmocage <- datestr[,  "MOCAGE"] / 300 
+DepSeuil=c(datestr[, "O3obs"] > 150)
+predmocage <- prediction(rocmocage,DepSeuil)
+perfmocage <- performance(predmocage, "tpr", "fpr")
+
+
+rocglm <- pred.glm / 300    
+predglm <- prediction(rocglm,DepSeuil)
+perfglm <- performance(predglm, "tpr", "fpr")
+
+roclogit <- predict(log.qm.step1, newdata = datestq, type="response")
+predlogit <- prediction(roclogit, datestq[, "DepSeuil"])
+perflogit <- performance(predlogit, "tpr", "fpr")
+
+plot(perfglm, col = "blue",lty=2, main = "Courbe ROC \n Mod. quad. backward AIC ")
+plot(perfmocage,col="orange",lty=2,add=TRUE)
+plot(perflogit,col="green",lty=1,add=TRUE) 
+
+legend("right", legend=c("Mod. Quad. backward AIC", "Mocage", "Logit"),
+       col=c("blue","orange","green"), lty=c(2,2,1), text.font=1,    cex=0.8)
+
+```
+
+**Question** Que sont sensibilité et spécificité d'une courbe ROC?
+
+**Réponse**
+
+La sensibilité est la capacité à bien prédire les vrais positifs et la spécificité est la capacité a bien prédire les vrais négatifs.
+
+Les résultats obtenus dépendent évidemment en plus de l'échantillonnage initial entre apprentissage et test. Dans le cas où les courbes se croisent, cela signifie qu'il n'y a pas de prévision uniformément meilleure de l'occurrence de dépassement. Cela dépend de la sensibilité ou de la spécificité retenue pour le modèle. Ceci souligne l'importance de la bonne définition du critère à utiliser pour le choix d'une "meilleure" méthode. Ce choix dépend directement de celui , "politique" ou "économique" de sensibilité et / ou spécificité du modèle retenu. En d'autres termes, quel taux de fausse alerte, avec des imputations économiques évidentes, est supportable au regard des dépassements non détectés et donc de la dégradation sanitaire de la population à risque ?
+
+C'est une fois ce choix arrêté que le statisticien peut opérer une comparaison des méthodes en présence.
+
+**Question** Les performances des deux approches gaussiennes et binomiales sont-elles très différentes ?
+
+**Réponse**
+
+Les courbes se croisent, ce qui suggère que la performance relative de ces modèles change avec le seuil de classification. À certains seuils, le modèle gaussien pourrait être préféré en raison d'une meilleure sensibilité, tandis qu'à d'autres, le modèle binomial pourrait être favorisé pour une meilleure spécificité.
+
+Si il s'agit de predire une variable continue, un modèle gaussien serait approprié et plus performant. Tant dit que si l'on predit une variable binaire, l'approche binomiale (comme la régression logistique) serait plus adaptée.
+
+**Question** Sur le graphe ci-dessus, ajouter la courbe ROC pour le modèle déterministe MOCAGE. Qu'observez-vous?
+
+La courbe de performance du modèle "Mocage" démarre avec un taux de vrais positifs légèrement plus bas que les deux autres modèles lorsque les taux de faux positifs sont très bas. Cependant, au fur et à mesure que les taux de faux positifs augmentent , la performance du modèle "Mocage" s'améliore rapidement. En fin de compte, la courbe "Mocage" devient supérieure à celle du modèle "Logit" en termes de taux de vrais positifs, ce qui indique une meilleure sensibilité du modèle "Mocage" dans cette région spécifique.
+
+# <FONT COLOR="Red">Épisode 3 : CART, Agrégation de modèles </font>
+
+## [Arbre de décision binaire (CART)](http://wikistat.fr/pdf/st-m-app-cart.pdf)
+
+La librairie `rpart` est celle la plus couramment utilisée pour la construction d'arbres de décision. Deux types d'arbres peuvent être estimés selon que la variable à modéliser est la concentration d'ozone (arbre de régression) ou directement le dépassement du seuil (arbre de discrimination ou de décision). Différents paramètres contrôlent l'exécution de l'algorithme : la pénalisation minimale (cp) pour la construction de l'arbre maximal, le nombre minimal d'observations par noeud, le nombre de validations croisées (par défaut 10)... cf. l'aide en ligne (`?rpart.control`) pour plus de détails mais celle-ci n'est pas très explicite sur certains paramètres.
+
+NB. Une séquence de valeurs de la pénalisation `cp` est associée à une séquence d'arbres emboîtés.
+
+### Estimation et élagage de l'arbre de régression
+
+**Question** Quel critère est optimisé lors de la création d'un noeud de l'arbre?
+
+**Réponse**
+
+Dans un arbre de régression construit avec rpart, le critère optimisé lors de la création d'un nœud est la réduction de la somme des carrés des résidus, visant à minimiser l'erreur de prédiction.
+
+```{r}
+library(rpart) 
+help(rpart)
+help(rpart.control)
+```
+
+```{r}
+tree.reg=rpart(O3obs~.,data=datappr,control=rpart.control(cp=0.001))
+```
+
+La commande `summary(tree.reg)` fournit un descriptif de l'arbre obtenu mais un graphe est préférable.
+
+```{r}
+library(rpart.plot)
+options(repr.plot.width = 15, repr.plot.height = 10)
+rpart.plot(tree.reg)
+```
+
+L'arbre est illisible et présente trop de feuilles pour une bonne prévision (sur-apprentissage), il est nécessaire d'en réduire le nombre par élagage. Les commandes suivantes calculent les prévisions obtenues par validation croisée 10-fold pour chaque arbre élagué suivant les valeurs successives du coefficient de complexité. La séquence de ces valeurs est implicitement celle fournit par `rpart`.
+
+```{r}
+help(xpred.rpart)
+xmat<-xpred.rpart(tree.reg,xval=10) 
+# one row for each observation and one column for each complexity value
+
+# Cross-validation error par valeur de CP
+CVerr<-apply((xmat-datappr[,"O3obs"])^2,2,sum)
+
+plotcp(tree.reg)
+```
+
+Cherchez la valeur de `cp` correspondant à la plus petite erreur puis utilisez la pour la construction de l'arbre.
+
+```{r}
+as.numeric(attributes(which.min(CVerr))$names)
+tree.reg=rpart(O3obs~.,data=datappr,control=rpart.control(cp=as.numeric(attributes(which.min(CVerr))$names)))
+rpart.plot(tree.reg,type=5,extra=101)
+```
+
+La librairie `partykit` propose une construction graphique de l'arbre:
+
+```{r}
+library(partykit)
+plot(as.party(tree.reg), type="simple")
+```
+
+La fenêtre est trop petite pour représenter les distributions (histogramme) de la variable cible (concentration en ozone) dans chaque feuille.
+
+**Question** Quelle est la variable qui contribue le plus à l'interprétation ?
+
+**Réponse**
+
+MOCAGE est la variable qui contribue le plus a l'interprétation, de plus il est la variable principale pour diviser les données, sinon TEMPE si on ne compte pas la racine
+
+Graphe des résidus
+
+```{r}
+fit.tree=predict(tree.reg)
+res.tree=fit.tree-datappr[,"O3obs"]
+gplot.res(fit.tree,res.tree,"residus de tree.reg")
+```
+
+**Question** A quoi est due la structure particulière de ce graphe ?
+
+**Réponse**
+
+La structure en bandes verticales du graphique des résidus est due à la nature des arbres de décision. Les arbres de décision fonctionnent en divisant l'espace des caractéristiques en régions homogènes.
+
+Voici un exemple de code pour faire cet élagage avec la librairie `caret`
+
+```{r}
+library(caret)
+ctrl <- trainControl(method = "cv",number = 10)
+treecaret <- train(O3obs~.,data=datappr,method = "rpart",trControl = ctrl,tuneLength =20)
+print(paste("Valeur de cp retenue = ",treecaret$bestTune,sep=""))
+rpart.plot(treecaret$finalModel)
+```
+
+### Estimation et élagage d'un arbre de discrimination
+
+Dans le cas d'une discrimination, le critère par défaut est l'indice de concentration de Gini ; il est possible de préciser un autre critère (split="information") ainsi que des poids sur les observations, une matrice de coûts de mauvais classement ainsi que des probabilités a priori (`?rpart` pour plus de détails).
+
+**Question** Quel autre critère d'hétérogénéité est utilisé ?
+
+**Réponse**
+
+L'entropie est un autre critère d'hétérogénéité couramment utilisé pour la construction d'arbres de décision. Il est utilisée pour évaluer la pureté des noeuds d'un arbre de décision
+
+```{r}
+tree.dis=rpart(DepSeuil~.,data=datappq,parms=list(split="information"),cp=0.001)
+rpart.plot(tree.dis) 
+```
+
+La même procédure d'élagage par validation croisée est mise en place mais avec une expression différente de l'erreur de prévision: taux de mal classés plutôt qu'erreur quadratique.
+
+```{r}
+xmat = xpred.rpart(tree.dis)
+# Comparaison des valeurs prédite et observée
+xerr=datappq$DepSeuil!= (xmat>1.5) 
+# Calcul  des estimations des taux d'erreur
+CVerr=apply(xerr, 2, sum)/nrow(xerr)
+CVerr
+```
+
+```{r}
+tree.dis=rpart(DepSeuil~.,data=datappq,parms=list(split="information"),cp=as.numeric(attributes(which.min(CVerr))$names))
+rpart.plot(tree.dis,type=4)
+```
+
+Avec la librairie `caret`:
+
+```{r}
+
+library(caret)
+ctrl <- trainControl(method = "cv",number = 10)
+treecaret <- train(DepSeuil~.,data=datappq,method = "rpart",trControl = ctrl,tuneLength =20,metric="Accuracy")
+print(paste("Valeur de cp retenue = ",treecaret$bestTune,sep=""))
+rpart.plot(treecaret$finalModel)
+```
+
+### Prévision de l'échantillon test
+
+Différentes prévisions sont considérées assorties des erreurs estimées sur l'échantillon test. Prévision quantitative de la concentration, prévision de dépassement à partir de la prévision quantitative et directement la prévision de dépassement à partir de l'arbre de décision.
+
+#### Erreur de régression
+
+```{r}
+# Calcul des prévisions
+pred.treer=predict(tree.reg,newdata=datestr)
+# Erreur quadratique moyenne de prévision en régression
+sum((pred.treer-datestr[,"O3obs"])^2)/nrow(datestr)
+```
+
+#### Erreur de classification (matrice de confusion)
+
+```{r}
+# Matrice de confusion pour la prévision du 
+# dépassement de seuil (régression)
+  #table(pred.treer>150,datestr[,"O3obs"]>150)
+confusionMatrix(as.factor(pred.treer>150),as.factor(datestr[,"O3obs"]>150))$table
+```
+
+```{r}
+# Même chose pour l'arbre de discrimination
+pred.treeq=predict(tree.dis,newdata=datestq,type="class")
+  #table(pred.treeq,datestq[,"DepSeuil"])
+confusionMatrix(pred.treeq,datestq[,"DepSeuil"])$table
+```
+
+**Question** Quelle stratégie semble meilleure à ce niveau ?
+
+**Réponse**
+
+Exactitude = (VP+VN ) / (VP + VN + FP + FN)
+
+Précision = VP / (VP + FP)
+
+Rappel = VP / (VP + FN)
+
+Arbre de discrimination
+
+VP (Vrais Positifs) = 21 VN (Vrais Négatifs) = 162 FP (Faux Positifs) = 4 FN (Faux Négatifs) = 22
+
+Exactitude = 0.8756
+
+Précision = 0.84
+
+Rappel = 0.4884
+
+Régression
+
+VP (Vrais Positifs) = 19 VN (Vrais Négatifs) = 157 FP (Faux Positifs) = 9 FN (Faux Négatifs) = 24
+
+Exactitude = 0.842
+
+Précision = 0.679
+
+Rappel = 0.442
+
+L'abre de discrimination possède une meilleur précision et rappel ainsi qu'une meilleur exactitude.
+
+#### Courbes ROC
+
+```{r}
+ROCregtree=pred.treer/300
+predregtree=prediction(ROCregtree,datestq$DepSeuil)
+perfregtree=performance(predregtree,"tpr","fpr")
+ROCdistree=predict(tree.dis,newdata=datestq,type="prob")[,2]
+preddistree=prediction(ROCdistree,datestq$DepSeuil)
+perfdistree=performance(preddistree,"tpr","fpr")
+# tracer les courbes ROC en les superposant 
+# pour mieux comparer
+
+options(repr.plot.width = 8, repr.plot.height = 6)
+plot(perflogit,col="blue")
+plot(perfregtree,col="orange",lty=2,add=TRUE) 
+plot(perfdistree,col="green",add=TRUE)  
+
+legend("right", legend=c("Logit", "TreeReg", "TreeDis"),
+       col=c("blue","orange","green"), lty=c(1,2,1), text.font=1,    cex=0.8)
+
+```
+
+**Question** Comparez les qualités de prévision. Une meilleure méthode se dégage-t-elle ?
+
+**Réponse**
+
+La régression logistique (Logit) semble etre la méthode la plus performante pour de la prévision car sa courbe est la plus proche du coin supérieur gauche, ainsi il est donc la meilleure méthode, suivie de près par l'arbre de régression (TreeReg). L'arbre de classification (TreeDis) est moins performant que les deux autres.
+
+# <FONT COLOR="Red">Épisode 4 : Réseaux de neurones </font>
+
+## [Réseau de neurones](http://wikistat.fr/pdf/st-m-app-rn.pdf)
+
+### Introduction
+
+Il s'agit d'estimer un modèle de type *perceptron* avec en entrée les variables qualitatives ou quantitatives et en sortie la variable à prévoir. Des fonctions R pour l'apprentissage d'un perceptron élémentaire ont été réalisées par différents auteurs et sont accessibles sur le réseau. La librairie `nnet` de (Ripley, 1999), est limitée au perceptron à une couche. Ce n'est pas de l'*apprentissage profond* ! mais suffisant dans bien des cas. Une librairie R associée au logiciel éponyme H2O propose des réseaux à plusieurs couches et "convolutionnels".
+
+Comme pour les arbres, la variable à expliquer est soit quantitative soit qualitative ; la fonction de transfert du neurone de sortie d'un réseau doit être adaptée en conséquence.
+
+**Question** Quelle fonction de transfert est utilisée pour le dernier neurone en régression ? en classification binaire? en classification multiclasse ?
+
+**Réponse** - En régression : La fonction de transfert utilisée est généralement la fonction d'identité (ou fonction linéaire). Cela signifie que la sortie du neurone est directement proportionnelle à la somme pondérée de ses entrées, ce qui permet de prédire des valeurs continues.
+
+-   En classification binaire : La fonction de transfert est la fonction sigmoïde (ou logistique). Elle transforme la sortie du neurone en une probabilité comprise entre 0 et 1, ce qui est adapté pour classer les observations en deux catégories.
+
+-   En classification multiclasse : On utilise souvent la fonction softmax. Cette fonction transforme les sorties du neurone en probabilités pour chaque classe, de sorte que la somme des probabilités de toutes les classes soit égale à 1. Cela permet de classer les observations dans l'une des plusieurs catégories possibles.
+
+**Question** Quel est le choix par défaut pour les neurones de la couche cachée?
+
+**Réponse**
+
+la fonction d'activation par défaut pour les neurones de la couche cachée est généralement la sigmoïde
+
+Différentes stratégies sont proposées pour éviter le sur-apprentissage. La première consiste à optimiser le nombre de neurones sur la couche cachée. Très approximativement il est d'usage de considérer, qu'en moyenne, il faut une taille d'échantillon d'apprentissage 10 fois supérieure au nombre de poids c'est-à-dire au nombre de paramètres à estimer. On remarque qu'ici la taille de l'échantillon d'apprentissage (832) est modeste pour une application raisonnable du perceptron. Seuls des nombres restreints de neurones peuvent être considérés et sur une seule couche cachée.
+
+**Question** Quel est le paramètre `decay` de la fonction `nnet`?
+
+**Réponse**
+
+Le paramètre decay est crucial pour contrôler la régularisation dans le modèle de perceptron, ce qui permet de limiter le sur-apprentissage et d'améliorer la généralisation du modèle sur de nouvelles données.
+
+**Question** Indiquez une autre façon d'éviter le sur-apprentissage.
+
+**Réponse**
+
+La validation croisée est une méthode efficace pour évaluer la performance d'un modèle et réduire le risque de sur-apprentissage, en garantissant que le modèle apprend de manière à bien généraliser sur des données nouvelles.
+
+### Cas de la régression
+
+```{r}
+library(MASS)
+library(nnet)
+# apprentissage
+# attention au paramètre linout dans le cas de la régression
+nnet.reg=nnet(O3obs~.,data=datappr,size=5,decay=1,linout=TRUE,maxit=500) 
+summary(nnet.reg)
+```
+
+La commande donne la "trace" de l'exécution avec le comportement de la convergence mais le détail des poids de chaque entrée de chaque neurone ne constitue pas un résultats très explicite !
+
+**Question** Contrôlez le nombre de poids estimés.
+
+**Réponse**
+
+Poids des entrées aux neurones cachés: 12 entrées \* 5 neurones cachés = 60 poids Biais pour chaque neurone caché: 5 biais Poids des neurones cachés au neurone de sortie: 5 neurones cachés \* 1 neurone de sortie = 5 poids Biais pour le neurone de sortie: 1 biais, 71 poids,
+
+L'optimisation des paramètres nécessite encore le passage par la validation croisée. Il n'y a pas de fonction dans la librairie `nnet` permettant de le faire mais la fonction `tune.nnet` de la librairie `e1071` est adaptée à cette démarche.
+
+```{r}
+library(e1071)
+plot(tune.nnet(O3obs~.,data=datappr,size=c(2,3,4),decay=c(1,2,3),maxit=200,linout=TRUE))
+plot(tune.nnet(O3obs~.,data=datappr,size=4:5,decay=1:10))
+```
+
+Faire éventuellement varier la grille des paramètres (zoom), notez la taille et le `decay` optimaux. Il faudrait aussi faire varier le nombre total d'itérations. Cela risque de prendre un peu de temps ! Notez également que chaque exécution donne des résultats différents... il n'est donc pas très utile d'y passer beaucoup de temps !
+
+**Question** Ré-estimez le modèle supposé optimal avant de tracer le graphe des résidus.
+
+```{r}
+nnet.reg=nnet(O3obs~.,data=datappr,size=3,decay=2,linout=TRUE,maxit=200)
+# calcul et graphe des résidus
+fit.nnetr=predict(nnet.reg,data=datappr)
+res.nnetr=fit.nnetr-datappr[,"O3obs"]
+gplot.res(fit.nnetr,res.nnetr,titre="")
+```
+
+### Cas de la discrimination
+
+```{r}
+# apprentissage
+nnet.dis=nnet(DepSeuil~.,data=datappq,size=5,decay=0) 
+summary(nnet.reg)
+```
+
+La validation croisée est toujours nécessaire afin de tenter d'optimiser les choix en présence : nombre de neurones, `decay` et éventuellement le nombre maximal d'itérations.
+
+L'initialisation de l'apprentissage d'un réseau de neurone comme celle de l'estimation de l'erreur par validation croisée sont aléatoires. Chaque exécution donne donc des résultats différents. À ce niveau, il serait intéressant de construire un plan d'expérience à deux facteurs (ici, les paramètres de taille et `decay`) de chacun trois niveaux. Plusieurs réalisations pour chaque combinaison des niveaux suivies d'un test classique d'anova permettraient de se faire une idée plus juste de l'influence de ces facteurs sur l'erreur.
+
+**Question** Notez la taille et le `decay` optimaux et ré-estimez le modèle pour ces valeurs.
+
+```{r}
+plot(tune.nnet(DepSeuil~.,data=datappq,size=c(3,4,5),decay=c(0,1,2),maxit=200,linout=FALSE))
+```
+
+```{r}
+nnet.dis=nnet(DepSeuil~.,data=datappq,size=5,decay=1) 
+```
+
+### Prévisions de l'échantillon test
+
+Différentes prévisions sont considérées assorties des erreurs estimées sur l'échantillon test. Prévision quantitative de la concentration, prévision de dépassement à partir de la prévision quantitative et directement la prévision de dépassement à partir de l'arbre de décision.
+
+#### Erreur de régression
+
+```{r}
+# Calcul des prévisions
+pred.nnetr=predict(nnet.reg,newdata=datestr)
+pred.nnetq=predict(nnet.dis,newdata=datestq) 
+# Erreur quadratique moyenne de prévision
+sum((pred.nnetr-datestr[,"O3obs"])^2)/nrow(datestr)
+```
+
+#### Erreur de classification (matrice de confusion)
+
+```{r}
+# Matrice de confusion pour la prévision du 
+# dépassement de seuil (régression)
+table(pred.nnetr>150,datestr[,"O3obs"]>150)
+
+```
+
+```{r}
+
+confusionMatrix(as.factor(pred.nnetr>150),as.factor(datestr[,"O3obs"]>150))$table
+```
+
+```{r}
+# Même chose pour la discrimination
+table(pred.nnetq>0.5,datestq[,"DepSeuil"])
+
+```
+
+#### Courbes ROC
+
+```{r}
+library(ROCR)
+
+
+roclogit <- predict(log.qm.step1, newdata = datestq, type="response")
+predlogit <- prediction(roclogit, datestq[, "DepSeuil"])
+perflogit <- performance(predlogit, "tpr", "fpr")
+
+
+rocnnetr=pred.nnetr/300
+prednnetr=prediction(rocnnetr,datestq$DepSeuil)
+perfnnetr=performance(prednnetr,"tpr","fpr")
+
+rocnnetq=pred.nnetq
+prednnetq=prediction(rocnnetq,datestq$DepSeuil)
+perfnnetq=performance(prednnetq,"tpr","fpr")
+
+# tracer les courbes ROC en les superposant pour mieux comparer
+plot(perflogit,col="blue")
+plot(perfnnetr,col="darkgreen",lty=2,add=TRUE) 
+plot(perfnnetq,col="darkgreen",add=TRUE)  
+legend("right", legend=c("Logit", "Nnetr", "Nnetq"),
+       col=c("blue","darkgreen", "darkgreen"), lty=c(1,2,1), text.font=1,    cex=0.8)
+
+```
+
+**Question** Une méthode semble-t-elle significativement meilleure?
+
+**Réponse**
+
+La courbre Logit ce demarque legerement au niveau des True positive lorsque le False positive rate est proche de 0, mais lorque l'on suit l'evolution des trois courbes, a partir d'un certain taux de False positive (0.3), les trois courbes se chevauche. Cela montre une performances similaires entre les trois modèles.
+
+# 
