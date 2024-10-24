@@ -13,6 +13,14 @@ dag = DAG(
  schedule_interval=None,
 )
 
+
+dag222 = DAG(
+ dag_id="amir",
+ start_date=airflow.utils.dates.days_ago(14),
+ schedule_interval=None,
+)
+
+
 download_launches = BashOperator(
  task_id="download_launches",
  bash_command="curl -o /tmp/launches.json -L 'https://ll.thespacedevs.com/2.0.0/launch/upcoming'",
@@ -57,4 +65,21 @@ test = BashOperator(
  dag=dag,
 )
 
+
+amir_task_1 = BashOperator(
+ task_id="amir_task_1",
+ bash_command='echo $(ls /tmp/images/)',
+ dag=dag222,
+)
+
+amir_task_2 = BashOperator(
+ task_id="amir_task_2",
+ bash_command='echo $(ls /tmp/images/)',
+ dag=dag222,
+)
+
+
 download_launches >> get_pictures >> notify >> test
+
+
+amir_task_2 >> amir_task_1
